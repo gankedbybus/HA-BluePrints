@@ -42,7 +42,7 @@ blueprint:
     notification_message:
       name: Notification Subtext
       description: This will show up in the notification message body
-      default:
+      default: ""
 
     notification_link:
       name: Notification Link
