@@ -2,8 +2,8 @@ blueprint:
   name: Sensor Open - Discord Notify
   description: >
     Sends a Discord message whenever a binary sensor (door, window, contact,
-    motion, etc.) opens or turns on. Supports an optional cooldown to avoid
-    message spam.
+    motion, etc.) opens or turns on. Can target a channel OR send a DM to a
+    specific user. Supports an optional cooldown to avoid message spam.
   domain: automation
   input:
     sensor_entity:
@@ -26,8 +26,22 @@ blueprint:
     discord_notify_service:
       name: Discord Notify Service
       description: >
-        The notify service that points to your Discord channel.
-        Example: notify.discord  or  notify.discord_home_alerts
+        The notify service for your Discord bot.
+        Example: notify.discord
+      selector:
+        text:
+
+    discord_target:
+      name: Discord Target (Channel ID or User ID)
+      description: >
+        Where to send the message. This is a numeric ID — right-click a
+        channel or user in Discord (with Developer Mode on) and choose
+        "Copy ID".
+
+        • For a channel message: paste the channel ID (e.g. 123456789012345678)
+        • For a DM to someone: paste their user ID (e.g. 987654321098765432)
+
+        The bot must share a server with the user to DM them.
       selector:
         text:
 
@@ -93,6 +107,7 @@ action:
   - service: !input discord_notify_service
     data:
       message: "{{ final_message }}"
+      target: !input discord_target
 
 mode: single
 max_exceeded: silent
