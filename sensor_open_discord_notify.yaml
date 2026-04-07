@@ -1,0 +1,98 @@
+blueprint:
+  name: Sensor Open - Discord Notify
+  description: >
+    Sends a Discord message whenever a binary sensor (door, window, contact,
+    motion, etc.) opens or turns on. Supports an optional cooldown to avoid
+    message spam.
+  domain: automation
+  input:
+    sensor_entity:
+      name: Sensor
+      description: The binary sensor to watch (door, window, contact, motion, etc.).
+      selector:
+        entity:
+          domain: binary_sensor
+
+    open_state:
+      name: Trigger State
+      description: Which state counts as "open" / active for your sensor.
+      default: "on"
+      selector:
+        select:
+          options:
+            - "on"
+            - "off"
+
+    discord_notify_service:
+      name: Discord Notify Service
+      description: >
+        The notify service that points to your Discord channel.
+        Example: notify.discord  or  notify.discord_home_alerts
+      selector:
+        text:
+
+    discord_message:
+      name: Message
+      description: >
+        The message body. Use {{ sensor_name }} as a placeholder for the
+        sensor's friendly name, and {{ now().strftime('%H:%M') }} for time.
+      default: "⚠️ {{ sensor_name }} is open - please close it!"
+      selector:
+        text:
+          multiline: true
+
+    cooldown_minutes:
+      name: Cooldown (minutes)
+      description: >
+        Minimum minutes between repeated Discord messages for the same sensor.
+        Set to 0 to disable the cooldown.
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 120
+          unit_of_measurement: min
+
+# ── Internal variables ────────────────────────────────────────────────────────
+variables:
+  sensor_entity: !input sensor_entity
+  discord_message_template: !input discord_message
+  cooldown_minutes: !input cooldown_minutes
+
+# ── Trigger ───────────────────────────────────────────────────────────────────
+trigger:
+  - platform: state
+    entity_id: !input sensor_entity
+    to: !input open_state
+
+# ── Cooldown condition ────────────────────────────────────────────────────────
+condition:
+  - condition: template
+    value_template: >
+      {% set cooldown = cooldown_minutes | int(0) %}
+      {% if cooldown == 0 %}
+        true
+      {% else %}
+        {% set last = state_attr(this.entity_id, 'last_triggered') %}
+        {% if last is none %}
+          true
+        {% else %}
+          {{ (now() - last).total_seconds() > (cooldown * 60) }}
+        {% endif %}
+      {% endif %}
+
+# ── Actions ───────────────────────────────────────────────────────────────────
+action:
+  - variables:
+      sensor_name: >-
+        {{ state_attr(sensor_entity, 'friendly_name') | default(sensor_entity) }}
+      final_message: >-
+        {{ discord_message_template
+           | replace('{{ sensor_name }}', sensor_name) }}
+
+  - service: !input discord_notify_service
+    data:
+      message: "{{ final_message }}"
+
+mode: single
+max_exceeded: silent
