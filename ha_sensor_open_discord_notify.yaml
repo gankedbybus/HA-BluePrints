@@ -70,7 +70,6 @@ blueprint:
 # ── Internal variables ────────────────────────────────────────────────────────
 variables:
   sensor_entity: !input sensor_entity
-  discord_message_template: !input discord_message
   cooldown_minutes: !input cooldown_minutes
 
 # ── Trigger ───────────────────────────────────────────────────────────────────
@@ -100,9 +99,8 @@ action:
   - variables:
       sensor_name: >-
         {{ state_attr(sensor_entity, 'friendly_name') | default(sensor_entity) }}
-      final_message: >-
-        {{ discord_message_template
-           | replace('{{ sensor_name }}', sensor_name) }}
+  - variables:
+      final_message: !input discord_message
 
   - service: !input discord_notify_service
     data:
