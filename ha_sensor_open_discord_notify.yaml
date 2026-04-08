@@ -1,21 +1,38 @@
 blueprint:
-  name: Sensor Open - Discord Notify
+  name: Away - Open Sensor Discord Notify
   description: >
-    Sends a Discord message whenever a binary sensor (door, window, contact,
-    motion, etc.) opens or turns on. Can target a channel OR send a DM to a
-    specific user. Supports an optional cooldown to avoid message spam.
+    When a person or device leaves home, checks all specified binary sensors
+    and sends a Discord notification for each one that is open/active.
+    Supports an optional cooldown to avoid message spam.
   domain: automation
   input:
-    sensor_entity:
-      name: Sensor
-      description: The binary sensor to watch (door, window, contact, motion, etc.).
+    tracked_entity:
+      name: Tracked Person / Device
+      description: The person or device_tracker entity to monitor for leaving home.
+      selector:
+        entity:
+          domain:
+            - person
+            - device_tracker
+
+    away_state:
+      name: Away State
+      description: The state that means "away" for your tracked entity.
+      default: "not_home"
+      selector:
+        text:
+
+    sensor_entities:
+      name: Sensors to Check
+      description: The binary sensors to check when the tracked entity leaves.
       selector:
         entity:
           domain: binary_sensor
+          multiple: true
 
     open_state:
-      name: Trigger State
-      description: Which state counts as "open" / active for your sensor.
+      name: Sensor Open State
+      description: Which state counts as "open" / active for your sensors.
       default: "on"
       selector:
         select:
@@ -46,10 +63,10 @@ blueprint:
         text:
 
     discord_message:
-      name: Message
+      name: Message (per sensor)
       description: >
-        The message body. Use {{ sensor_name }} as a placeholder for the
-        sensor's friendly name, and {{ now().strftime('%H:%M') }} for time.
+        The message body sent for each open sensor. Use {{ sensor_name }} as
+        a placeholder for the sensor's friendly name.
       default: "⚠️ {{ sensor_name }} is open - please close it!"
       selector:
         text:
@@ -58,7 +75,7 @@ blueprint:
     cooldown_minutes:
       name: Cooldown (minutes)
       description: >
-        Minimum minutes between repeated Discord messages for the same sensor.
+        Minimum minutes between repeated Discord notifications.
         Set to 0 to disable the cooldown.
       default: 10
       selector:
@@ -69,14 +86,13 @@ blueprint:
 
 # ── Internal variables ────────────────────────────────────────────────────────
 variables:
-  sensor_entity: !input sensor_entity
   cooldown_minutes: !input cooldown_minutes
 
 # ── Trigger ───────────────────────────────────────────────────────────────────
 trigger:
   - platform: state
-    entity_id: !input sensor_entity
-    to: !input open_state
+    entity_id: !input tracked_entity
+    to: !input away_state
 
 # ── Cooldown condition ────────────────────────────────────────────────────────
 condition:
@@ -97,15 +113,22 @@ condition:
 # ── Actions ───────────────────────────────────────────────────────────────────
 action:
   - variables:
-      sensor_name: >-
-        {{ state_attr(sensor_entity, 'friendly_name') | default(sensor_entity) }}
-  - variables:
-      final_message: !input discord_message
-
-  - service: !input discord_notify_service
-    data:
-      message: "{{ final_message }}"
-      target: !input discord_target
+      open_state_val: !input open_state
+      sensor_list: !input sensor_entities
+  - repeat:
+      for_each: "{{ sensor_list }}"
+      sequence:
+        - condition: template
+          value_template: "{{ states(repeat.item) == open_state_val }}"
+        - variables:
+            sensor_name: >-
+              {{ state_attr(repeat.item, 'friendly_name') | default(repeat.item) }}
+        - variables:
+            final_message: !input discord_message
+        - service: !input discord_notify_service
+          data:
+            message: "{{ final_message }}"
+            target: !input discord_target
 
 mode: single
 max_exceeded: silent
