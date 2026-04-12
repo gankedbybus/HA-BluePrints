@@ -1,0 +1,96 @@
+blueprint:
+  name: Android Auto - Play Spotify Playlist
+  description: >
+    When your phone connects to Android Auto while you are home,
+    automatically start playing a Spotify playlist on the phone's
+    Spotify media player.
+  domain: automation
+  input:
+    android_auto_sensor:
+      name: Android Auto Sensor
+      description: >
+        The binary sensor that turns on when your phone connects to Android Auto.
+        Provided by the Home Assistant Companion App —
+        usually binary_sensor.{phone_name}_android_auto.
+      selector:
+        entity:
+          domain: binary_sensor
+
+    home_entity:
+      name: Person / Device Tracker
+      description: >
+        The person or device_tracker entity used to confirm you are home.
+        The automation only fires when this entity's state is "home".
+      selector:
+        entity:
+          domain:
+            - person
+            - device_tracker
+
+    spotify_media_player:
+      name: Spotify Media Player
+      description: >
+        The Spotify media player entity for this phone.
+        Find it under Settings → Devices & Services → Spotify.
+      selector:
+        entity:
+          domain: media_player
+
+    spotify_playlist_uri:
+      name: Spotify Playlist URI
+      description: >
+        The Spotify URI for the playlist to play.
+        Convert a share link by replacing the URL path with a URI prefix —
+        https://open.spotify.com/playlist/YOUR_PLAYLIST_ID
+        becomes spotify:playlist:YOUR_PLAYLIST_ID.
+      selector:
+        text:
+
+    shuffle:
+      name: Shuffle
+      description: Enable shuffle mode when playback starts.
+      default: true
+      selector:
+        boolean:
+
+    connect_delay:
+      name: Connection Delay (seconds)
+      description: >
+        Seconds to wait after Android Auto connects before starting playback.
+        A small delay gives Bluetooth audio time to fully hand off.
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 30
+          unit_of_measurement: seconds
+          mode: slider
+
+mode: single
+
+trigger:
+  - platform: state
+    entity_id: !input android_auto_sensor
+    to: "on"
+
+condition:
+  - condition: state
+    entity_id: !input home_entity
+    state: "home"
+
+action:
+  - delay:
+      seconds: !input connect_delay
+
+  - service: media_player.play_media
+    target:
+      entity_id: !input spotify_media_player
+    data:
+      media_content_id: !input spotify_playlist_uri
+      media_content_type: playlist
+
+  - service: media_player.shuffle_set
+    target:
+      entity_id: !input spotify_media_player
+    data:
+      shuffle: !input shuffle
