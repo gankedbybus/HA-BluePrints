@@ -86,8 +86,9 @@ action:
     target:
       entity_id: !input spotify_media_player
     data:
-      media_content_id: !input spotify_playlist_uri
-      media_content_type: playlist
+      media:
+       media_content_id: !input spotify_playlist_uri
+       media_content_type: playlist
 
   - service: media_player.shuffle_set
     target:
