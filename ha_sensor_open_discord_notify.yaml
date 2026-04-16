@@ -1,0 +1,134 @@
+blueprint:
+  name: Away - Open Sensor Discord Notify
+  description: >
+    When a person or device leaves home, checks all specified binary sensors
+    and sends a Discord notification for each one that is open/active.
+    Supports an optional cooldown to avoid message spam.
+  domain: automation
+  input:
+    tracked_entity:
+      name: Tracked Person / Device
+      description: The person or device_tracker entity to monitor for leaving home.
+      selector:
+        entity:
+          domain:
+            - person
+            - device_tracker
+
+    away_state:
+      name: Away State
+      description: The state that means "away" for your tracked entity.
+      default: "not_home"
+      selector:
+        text:
+
+    sensor_entities:
+      name: Sensors to Check
+      description: The binary sensors to check when the tracked entity leaves.
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+    open_state:
+      name: Sensor Open State
+      description: Which state counts as "open" / active for your sensors.
+      default: "on"
+      selector:
+        select:
+          options:
+            - "on"
+            - "off"
+
+    discord_notify_service:
+      name: Discord Notify Service
+      description: >
+        The notify service for your Discord bot.
+        Example: notify.discord
+      selector:
+        text:
+
+    discord_target:
+      name: Discord Target (Channel ID or User ID)
+      description: >
+        Where to send the message. This is a numeric ID — right-click a
+        channel or user in Discord (with Developer Mode on) and choose
+        "Copy ID".
+
+        • For a channel message: paste the channel ID (e.g. 123456789012345678)
+        • For a DM to someone: paste their user ID (e.g. 987654321098765432)
+
+        The bot must share a server with the user to DM them.
+      selector:
+        text:
+
+    discord_message:
+      name: Message (per sensor)
+      description: >
+        The message body sent for each open sensor. Use {{ sensor_name }} as
+        a placeholder for the sensor's friendly name.
+      default: "⚠️ {{ sensor_name }} is open - please close it!"
+      selector:
+        text:
+          multiline: true
+
+    cooldown_minutes:
+      name: Cooldown (minutes)
+      description: >
+        Minimum minutes between repeated Discord notifications.
+        Set to 0 to disable the cooldown.
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 120
+          unit_of_measurement: min
+
+# ── Internal variables ────────────────────────────────────────────────────────
+variables:
+  cooldown_minutes: !input cooldown_minutes
+
+# ── Trigger ───────────────────────────────────────────────────────────────────
+trigger:
+  - platform: state
+    entity_id: !input tracked_entity
+    to: !input away_state
+
+# ── Cooldown condition ────────────────────────────────────────────────────────
+condition:
+  - condition: template
+    value_template: >
+      {% set cooldown = cooldown_minutes | int(0) %}
+      {% if cooldown == 0 %}
+        true
+      {% else %}
+        {% set last = state_attr(this.entity_id, 'last_triggered') %}
+        {% if last is none %}
+          true
+        {% else %}
+          {{ (now() - last).total_seconds() > (cooldown * 60) }}
+        {% endif %}
+      {% endif %}
+
+# ── Actions ───────────────────────────────────────────────────────────────────
+action:
+  - variables:
+      open_state_val: !input open_state
+      sensor_list: !input sensor_entities
+  - repeat:
+      for_each: "{{ sensor_list }}"
+      sequence:
+        - condition: template
+          value_template: "{{ states(repeat.item) == open_state_val }}"
+        - variables:
+            sensor_name: >-
+              {{ state_attr(repeat.item, 'friendly_name') | default(repeat.item) }}
+        - variables:
+            final_message: !input discord_message
+        - service: !input discord_notify_service
+          data:
+            message: "{{ final_message }}"
+            target: !input discord_target
+
+mode: single
+max_exceeded: silent

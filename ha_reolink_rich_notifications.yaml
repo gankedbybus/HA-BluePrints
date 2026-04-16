@@ -1,0 +1,136 @@
+blueprint:
+  name: Reolink Rich Notifications
+  description: >
+    Send Reolink rich notifications to an Android device.
+
+  domain: automation
+  input:
+    notify_device:
+      name: Devices to Notify
+      description: These mobile devices will receive a notification when alerts are triggered.
+      default: []
+      selector:
+        device:
+          integration: mobile_app
+          multiple: true
+
+    trigger_entities:
+      name: Trigger Sensors
+      description: These Reolink sensors will be monitored to determine when to send an alert.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - integration: reolink
+              domain: binary_sensor
+
+    retrigger_delay:
+      name: Retrigger Delay
+      description: Time to wait before triggering the same camera again.
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 20
+      selector:
+        duration:
+
+    notification_title:
+      name: Notification Heading
+      description: Title of the notification. Defaults to the name of the camera.
+      default: "{{ trigger.from_state.attributes.friendly_name }}"
+
+    notification_message:
+      name: Notification Subtext
+      description: This will show up in the notification message body
+      default: ""
+
+    notification_link:
+      name: Notification Link
+      description: Where do you want the notification to go when tapped
+      default: "app://com.mcu.reolink"
+
+mode: parallel
+max: 100
+
+variables:
+  notify_device: !input notify_device
+  trigger_entities: !input trigger_entities
+  retrigger_delay: !input retrigger_delay
+  notification_title: !input notification_title
+  notification_message: !input notification_message
+  notification_link: !input notification_link
+
+trigger:
+  platform: state
+  entity_id: !input trigger_entities
+  from: "off"
+  to: "on"
+
+action:
+  - variables:
+      camera_entities: "{{ device_entities(device_id(trigger.entity_id)) | select('match', '^camera\\.') | list }}"
+      camera_to_snapshot: >
+        {{
+        (camera_entities | select('match', '.*_snapshots_fluent$') | first) or
+        (camera_entities | select('match', '.*_snapshots_clear$') | first) or
+        (camera_entities | select('match', '.*_fluent$') | first) or
+        (camera_entities | first)
+        }}
+      image_file: "reolink_rich_notifications/{{ camera_to_snapshot }}_{{ trigger.to_state.last_updated | as_timestamp | timestamp_custom('%M-%S') }}.jpg"
+      should_skip_notification: >
+        {%
+          set other_sensor_times =
+            trigger_entities |
+            select('ne', trigger.entity_id) |
+            select('is_device_attr', 'id', device_id(trigger.entity_id)) |
+            expand |
+            map(attribute = 'last_updated') |
+            list
+            + [trigger.from_state.last_updated]
+        %}
+        {{ trigger.to_state.last_updated - other_sensor_times|max < timedelta(**retrigger_delay) }}
+
+  - if:
+      - condition: template
+        value_template: "{{ should_skip_notification }}"
+    then:
+      - stop: "Skipping notification for being too soon."
+
+  # Send notification without image first (silent - no vibration).
+  - repeat:
+      for_each: "{{ notify_device }}"
+      sequence:
+        - service: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+          data:
+            title: "{{ notification_title }}"
+            message: "{{ notification_message }}"
+            data:
+              tag: "{{ trigger.to_state.context.id }}"
+              channel: "silent_notification"
+              importance: low
+              ttl: 0
+              priority: high
+              url: "{{ notification_link }}"
+              clickAction: "{{ notification_link }}"
+
+  # Create camera snapshot
+  - service: camera.snapshot
+    data_template:
+      entity_id: "{{ camera_to_snapshot }}"
+      filename: "/media/{{ image_file }}"
+
+  # Re-send notification with image data.
+  - repeat:
+      for_each: "{{ notify_device }}"
+      sequence:
+        - service: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+          data:
+            title: "{{ notification_title }}"
+            message: "{{ notification_message }}"
+            data:
+              tag: "{{ trigger.to_state.context.id }}"
+              image: "/media/local/{{ image_file }}"
+              ttl: 0
+              priority: high
+              url: "{{ notification_link }}"
+              clickAction: "{{ notification_link }}"
