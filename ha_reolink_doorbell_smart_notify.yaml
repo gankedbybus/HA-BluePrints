@@ -1,0 +1,203 @@
+blueprint:
+  name: Reolink Doorbell – Smart Notify
+  description: >
+    When the Reolink doorbell is pressed:
+      • If you're home → sends a Discord message (with optional snapshot).
+      • If you're away → sends a rich push notification to your phone (with snapshot).
+
+  domain: automation
+  input:
+    doorbell_sensor:
+      name: Doorbell Visitor Sensor
+      description: The Reolink binary sensor that turns on when someone presses the doorbell.
+      selector:
+        entity:
+          filter:
+            - integration: reolink
+              domain: binary_sensor
+
+    person_entity:
+      name: Person to Track
+      description: The person entity used to determine if you are home.
+      selector:
+        entity:
+          domain: person
+
+    # ── Home actions (Discord) ──────────────────────────────────────────────
+    discord_notify_service:
+      name: Discord Notify Service
+      description: >
+        The notify service for your Discord bot (e.g. notify.discord).
+      selector:
+        text:
+
+    discord_target:
+      name: Discord Target (Channel or User ID)
+      description: >
+        Numeric Discord channel ID or user ID. Right-click in Discord
+        (Developer Mode) → Copy ID.
+      selector:
+        text:
+
+    discord_message:
+      name: Discord Message
+      description: Message sent via Discord when you're home.
+      default: "🔔 Someone is at the front door!"
+      selector:
+        text:
+          multiline: true
+
+    # ── Away actions (Phone) ────────────────────────────────────────────────
+    notify_device:
+      name: Mobile Device to Ring
+      description: The phone to send a push notification to when you're away.
+      selector:
+        device:
+          integration: mobile_app
+
+    phone_title:
+      name: Phone Notification Title
+      description: Title shown on the push notification.
+      default: "Doorbell"
+      selector:
+        text:
+
+    phone_message:
+      name: Phone Notification Message
+      description: Body text of the push notification.
+      default: "Someone is at the front door!"
+      selector:
+        text:
+          multiline: true
+
+    phone_link:
+      name: Phone Notification Tap Action
+      description: Where the notification goes when tapped.
+      default: "app://com.mcu.reolink"
+      selector:
+        text:
+
+    # ── Away actions (Chime) ──────────────────────────────────────────────
+    chime_entity:
+      name: Reolink Chime Entity
+      description: >
+        The Reolink chime siren or button entity to play when you're away.
+        Typically a siren entity like siren.reolink_doorbell_chime or a
+        button entity like button.reolink_doorbell_play_chime.
+      selector:
+        entity:
+          filter:
+            - integration: reolink
+              domain:
+                - siren
+                - button
+                - select
+
+    # ── Shared ──────────────────────────────────────────────────────────────
+    cooldown_seconds:
+      name: Cooldown
+      description: Minimum seconds between repeated notifications for the same doorbell press.
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 5
+          unit_of_measurement: s
+
+mode: single
+max_exceeded: silent
+
+variables:
+  person_entity: !input person_entity
+  notify_device: !input notify_device
+
+trigger:
+  - platform: state
+    entity_id: !input doorbell_sensor
+    from: "off"
+    to: "on"
+
+condition:
+  - condition: template
+    value_template: >
+      {% set cd = 30 %}
+      {% set last = state_attr(this.entity_id, 'last_triggered') %}
+      {{ last is none or (now() - last).total_seconds() > cd }}
+
+action:
+  # ── Grab a snapshot from the doorbell camera ────────────────────────────
+  - variables:
+      camera_entities: >
+        {{ device_entities(device_id(trigger.entity_id))
+           | select('match', '^camera\\.') | list }}
+      camera_to_snapshot: >
+        {{
+          (camera_entities | select('match', '.*_snapshots_fluent$') | first | default('')) or
+          (camera_entities | select('match', '.*_snapshots_clear$') | first | default('')) or
+          (camera_entities | select('match', '.*_fluent$') | first | default('')) or
+          (camera_entities | first | default(''))
+        }}
+      image_file: >
+        reolink_doorbell/snapshot_{{ now() | as_timestamp | timestamp_custom('%Y%m%d_%H%M%S') }}.jpg
+
+  - if:
+      - condition: template
+        value_template: "{{ camera_to_snapshot != '' }}"
+    then:
+      - service: camera.snapshot
+        data:
+          entity_id: "{{ camera_to_snapshot }}"
+          filename: "/media/{{ image_file }}"
+
+  # ── Branch: Home vs Away ────────────────────────────────────────────────
+  - choose:
+      # ── HOME → Discord ──────────────────────────────────────────────────
+      - conditions:
+          - condition: state
+            entity_id: !input person_entity
+            state: "home"
+        sequence:
+          - service: !input discord_notify_service
+            data:
+              message: !input discord_message
+              target: !input discord_target
+
+    # ── AWAY → Chime + Phone notification ─────────────────────────────────
+    default:
+      # Play the Reolink chime
+      - service: homeassistant.turn_on
+        target:
+          entity_id: !input chime_entity
+
+      # Silent notification first (fast delivery)
+      - service: "notify.mobile_app_{{ device_attr(notify_device, 'name') | slugify }}"
+        data:
+          title: !input phone_title
+          message: !input phone_message
+          data:
+            channel: "doorbell"
+            importance: high
+            ttl: 0
+            priority: high
+            url: !input phone_link
+            clickAction: !input phone_link
+
+      # Re-send with snapshot image if available
+      - if:
+          - condition: template
+            value_template: "{{ camera_to_snapshot != '' }}"
+        then:
+          - service: "notify.mobile_app_{{ device_attr(notify_device, 'name') | slugify }}"
+            data:
+              title: !input phone_title
+              message: !input phone_message
+              data:
+                tag: "doorbell_{{ trigger.to_state.context.id }}"
+                image: "/media/local/{{ image_file }}"
+                channel: "doorbell"
+                importance: high
+                ttl: 0
+                priority: high
+                url: !input phone_link
+                clickAction: !input phone_link
