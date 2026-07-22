@@ -76,7 +76,7 @@ action:
         (camera_entities | select('match', '.*_fluent$') | first) or
         (camera_entities | first)
         }}
-      image_file: "reolink_rich_notifications/{{ camera_to_snapshot }}_{{ trigger.to_state.last_updated | as_timestamp | timestamp_custom('%M-%S') }}.jpg"
+      image_file: "reolink_rich_notifications/{{ camera_to_snapshot }}_{{ trigger.to_state.last_updated | as_timestamp | timestamp_custom('%Y-%m-%d_%H-%M-%S') }}.jpg"
       should_skip_notification: >
         {%
           set other_sensor_times =
