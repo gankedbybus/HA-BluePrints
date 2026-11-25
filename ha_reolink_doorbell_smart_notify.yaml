@@ -148,7 +148,7 @@ action:
       - service: camera.snapshot
         data:
           entity_id: "{{ camera_to_snapshot }}"
-          filename: "/media/{{ image_file }}"
+          filename: "/config/www/{{ image_file }}"
 
   # ── Branch: Home vs Away ────────────────────────────────────────────────
   - choose:
@@ -194,7 +194,7 @@ action:
               message: !input phone_message
               data:
                 tag: "doorbell_{{ trigger.to_state.context.id }}"
-                image: "/media/local/{{ image_file }}"
+                image: "/local/{{ image_file }}"
                 channel: "doorbell"
                 importance: high
                 ttl: 0
